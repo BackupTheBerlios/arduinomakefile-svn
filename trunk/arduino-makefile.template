@@ -1,0 +1,128 @@
+#Projekt:	$program.ino
+#Bord:	   $board_name
+#Programmer: $programmer_name
+#Libs:	   $libraries
+
+PWD=$$(shell pwd)
+ARDUINO = 105
+ARDUINO_DIR = $arduino_dir
+LIB = $lib
+LIB_PIN = $lib_pin
+PROGRAM = $program
+BOARD = $board
+MCU = $build_mcu
+PROGRAMMER = $protocol
+BUILD_DIR = $$(PWD)/build-$$(BOARD)
+F_CPU = $build_f_cpu
+CCC = avr-g++
+CC = avr-gcc
+AR = avr-ar
+OBJCOPY = avr-objcopy
+TRANS = avrdude
+CFLAGS =	-Wall -c -g -Os -ffunction-sections -fdata-sections -mmcu=$$(MCU) -DF_CPU=$$(F_CPU) \
+			-DARDUINO=$$(ARDUINO) -D__PROG_TYPES_COMPAT__ -MMD -DUSB_VID=null -DUSB_PID=null 
+CPPFLAGS = -Wall -c -g -Os -fno-exceptions -ffunction-sections -fdata-sections -mmcu=$$(MCU) -DF_CPU=$$(F_CPU) \
+			-DARDUINO=$$(ARDUINO) -D__PROG_TYPES_COMPAT__ -MMD -DUSB_VID=null -DUSB_PID=null
+DFLAGS += -mmcu=$$(MCU) -Wl,--gc-sections -Os
+
+#Ardino-LIB
+INCLUDE_LIB = $include
+INCLUDE = $$(patsubst %, -I%,$$(INCLUDE_LIB))
+LIBS = $libraries
+LIBS_PATH = $libraries_path
+LIBS_USER_PATH = $libraries_user_path
+
+#Programm
+PROGRAM_OBJ=$$(patsubst %,$$(BUILD_DIR)/%.o,$$(PROGRAM).cpp)
+PROGRAM_HEX=$$(patsubst %,$$(BUILD_DIR)/%.hex,$$(PROGRAM).cpp)
+PROGRAM_ELF=$$(patsubst %,$$(BUILD_DIR)/%.elf,$$(PROGRAM).cpp)
+
+
+INCLUDE_C = $$(wildcard $$(patsubst %,%/*.c,$$(INCLUDE_LIB)))
+INCLUDE_CPP = $$(wildcard $$(patsubst %,%/*.cpp,$$(INCLUDE_LIB)))
+INCLUDE_OBJS = $$(patsubst $$(LIBS_PATH)/%,$$(BUILD_DIR)/%.o,$$(filter $$(LIBS_PATH)%,$$(INCLUDE_C))) \
+            $$(patsubst $$(LIBS_PATH)/%,$$(BUILD_DIR)/%.o,$$(filter $$(LIBS_PATH)%,$$(INCLUDE_CPP))) \
+            $$(patsubst $$(LIBS_USER_PATH)/%,$$(BUILD_DIR)/%.o,$$(filter $$(LIBS_USER_PATH)%,$$(INCLUDE_C))) \
+            $$(patsubst $$(LIBS_USER_PATH)/%,$$(BUILD_DIR)/%.o,$$(filter $$(LIBS_USER_PATH)%,$$(INCLUDE_CPP)))
+        
+CORE_LIBS= $core
+CORE_OBJS= $$(patsubst %, $$(BUILD_DIR)/%.o,$$(CORE_LIBS))
+CORE_LIB= $$(BUILD_DIR)/core.a
+LOCAL_OBJS = $$(patsubst %,$$(BUILD_DIR)/%.o,$$(wildcard *.cpp)) \
+			$$(patsubst %,$$(BUILD_DIR)/%.o,$$(wildcard *.c))
+
+#Core-Libs
+$$(BUILD_DIR)/%.c.o:$$(LIB)/avr-libc/%.c
+	@$$(CC) $$(CFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$^ -o$$@
+
+$$(BUILD_DIR)/%.c.o:$$(LIB)/%.c
+	@$$(CC) $$(CFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$^ -o$$@
+
+$$(BUILD_DIR)/%.cpp.o:$$(LIB)/%.cpp
+	@$$(CCC) $$(CPPFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$^ -o$$@
+
+#Zusätzliche Libs
+$$(BUILD_DIR)/%.c.o:$$(LIBS_PATH)/%.c
+	@mkdir -p $$(dir $$@)
+	@$$(CC) $$(CFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$(INCLUDE) $$^ -o$$@
+
+$$(BUILD_DIR)/%.c.o:$$(LIBS_USER_PATH)/%.c
+	@mkdir -p $$(dir $$@)
+	@$$(CC) $$(CFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$(INCLUDE) $$^ -o$$@
+
+$$(BUILD_DIR)/%.cpp.o:$$(LIBS_PATH)/%.cpp
+	@mkdir -p $$(dir $$@)
+	@$$(CCC) $$(CPPFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$(INCLUDE) $$^ -o$$@
+
+$$(BUILD_DIR)/%.cpp.o:$$(LIBS_USER_PATH)/%.cpp
+	@mkdir -p $$(dir $$@)
+	@$$(CCC) $$(CPPFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$(INCLUDE) $$^ -o$$@
+
+#Programm
+$$(BUILD_DIR)/%.cpp.o:%.ino
+	@echo "#include <Arduino.h>" > $$(patsubst %.cpp.o,%.cpp,$$@)
+	@cat $$(PROGRAM).ino >> $$(patsubst %.cpp.o,%.cpp,$$@)
+	@$$(CCC) -c $$(CPPFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$(INCLUDE) -I. $$(patsubst %.cpp.o,%.cpp,$$@) -o $$@
+
+#locale Libs
+$$(BUILD_DIR)/%.cpp.o:%.cpp
+	@$$(CCC) -c $$(CPPFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$(INCLUDE) -I. $$^ -o $$@
+
+$$(BUILD_DIR)/%.c.o:%.c
+	@mkdir -p $$(dir $$@)
+	@$$(CC) $$(CFLAGS) -I$$(LIB) -I$$(LIB_PIN) $$(INCLUDE) -I. $$^ -o$$@
+
+$$(BUILD_DIR)/%.hex: $$(BUILD_DIR)/%.elf
+	@$$(OBJCOPY) -O ihex -R .eeprom $$< $$@
+
+$$(BUILD_DIR)/%.eep: $$(BUILD_DIR)/%.elf
+	-$$(OBJCOPY) -j .eeprom --set-section-flags=.eeprom="alloc,load" -change-section-lma .eeprom=0 -O ihex $$< $$@
+
+all:	create_dir $$(PROGRAM_HEX)
+
+$$(PROGRAM_ELF): $$(CORE_LIB) $$(LOCAL_OBJS) $$(PROGRAM_OBJ)
+	@$$(CC) $$(DFLAGS) -o $$@ $$(LOCAL_OBJS) $$(CORE_OBJS) $$(INCLUDE_OBJS) $$(PROGRAM_OBJ) -L$$(BUILD_DIR) -lc -lm
+
+$$(CORE_LIB): $$(CORE_OBJS) $$(INCLUDE_OBJS)
+	@$$(AR) rcs $$@ $$(CORE_OBJS)
+
+create_dir:
+	@printf "Projekt:		$program.ino\n"
+	@printf "Bord:			$board_name\n"
+	@printf "Programmer:		$programmer\n"
+	@printf "Libs:			$libraries\n"
+	@printf "Buid-Verzeichnis:	"
+	@printf $$(BUILD_DIR)
+	@printf "\n*********************************************************************************\n"
+	@mkdir -p $$(BUILD_DIR)
+
+transfer: create_dir $$(PROGRAM_HEX)
+	avrdude -p$$(MCU) -c$$(PROGRAMMER) -Uflash:w:$$(PROGRAM_HEX):i -B1
+
+clean:
+	@printf "Dateien löschen\\n"
+	@rm -f $$(CORE_OBJS) $$(CORE_OBJS:%.o=%.d) $$(INCLUDE_OBJS) $$(INCLUDE_OBJS:%.o=%.d)  $$(BUILD_DIR)/$$(PROGRAM).* $$(BUILD_DIR)/core.a
+	@rm -f $$(LOCAL_OBJS) $$(LOCAL_OBJS:%.o=%.d)
+
+build: clean all
+	@printf "Build beendet\\n"
